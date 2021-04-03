@@ -2933,9 +2933,7 @@ static void add_single_addr_xrefs(RzCore *core, ut64 addr, RzGraph *graph) {
 }
 
 RZ_API RzGraph *rz_core_analysis_importxrefs(RzCore *core) {
-	RzBinInfo *info = rz_bin_get_info(core->bin);
 	RzBinObject *obj = rz_bin_cur_object(core->bin);
-	bool lit = info ? info->has_lit : false;
 	bool va = core->io->va || core->bin->is_debugger;
 
 	RzListIter *iter;
@@ -2948,8 +2946,9 @@ RZ_API RzGraph *rz_core_analysis_importxrefs(RzCore *core) {
 		return NULL;
 	}
 	rz_list_foreach (obj->imports, iter, imp) {
-		ut64 addr = lit ? rz_core_bin_impaddr(core->bin, va, imp->name) : 0;
-		if (addr) {
+		RzBinSymbol *sym = rz_bin_object_get_symbol_of_import(obj, imp);
+		ut64 addr = sym ? (va ? rz_bin_object_get_vaddr(obj, sym->paddr, sym->vaddr) : sym->paddr) : UT64_MAX;
+		if (addr && addr != UT64_MAX) {
 			add_single_addr_xrefs(core, addr, graph);
 		} else {
 			rz_graph_add_node_info(graph, imp->name, NULL, 0);
@@ -4795,8 +4794,11 @@ RZ_API int rz_core_analysis_all(RzCore *core) {
 	rz_core_task_yield(&core->tasks);
 
 	rz_cons_break_push(NULL, NULL);
+
+	RzBinFile *bf = core->bin->cur;
+	RzBinObject *o = bf ? bf->o : NULL;
 	/* Symbols (Imports are already analyzed by rz_bin on init) */
-	if ((list = rz_bin_get_symbols(core->bin)) != NULL) {
+	if (o && (list = o->symbols) != NULL) {
 		rz_list_foreach (list, iter, symbol) {
 			if (rz_cons_is_breaked()) {
 				break;
@@ -4806,17 +4808,16 @@ RZ_API int rz_core_analysis_all(RzCore *core) {
 				continue;
 			}
 			if (isValidSymbol(symbol)) {
-				ut64 addr = rz_bin_get_vaddr(core->bin, symbol->paddr,
-					symbol->vaddr);
+				ut64 addr = rz_bin_object_get_vaddr(o, symbol->paddr, symbol->vaddr);
 				rz_core_analysis_fcn(core, addr, -1, RZ_ANALYSIS_REF_TYPE_NULL, depth - 1);
 			}
 		}
 	}
 	rz_core_task_yield(&core->tasks);
 	/* Main */
-	if ((binmain = rz_bin_get_sym(core->bin, RZ_BIN_SYM_MAIN))) {
+	if (o && (binmain = rz_bin_object_get_special_symbol(o, RZ_BIN_SPECIAL_SYMBOL_MAIN))) {
 		if (binmain->paddr != UT64_MAX) {
-			ut64 addr = rz_bin_get_vaddr(core->bin, binmain->paddr, binmain->vaddr);
+			ut64 addr = rz_bin_object_get_vaddr(o, binmain->paddr, binmain->vaddr);
 			rz_core_analysis_fcn(core, addr, -1, RZ_ANALYSIS_REF_TYPE_NULL, depth - 1);
 		}
 	}
@@ -4826,7 +4827,7 @@ RZ_API int rz_core_analysis_all(RzCore *core) {
 			if (entry->paddr == UT64_MAX) {
 				continue;
 			}
-			ut64 addr = rz_bin_get_vaddr(core->bin, entry->paddr, entry->vaddr);
+			ut64 addr = rz_bin_object_get_vaddr(o, entry->paddr, entry->vaddr);
 			rz_core_analysis_fcn(core, addr, -1, RZ_ANALYSIS_REF_TYPE_NULL, depth - 1);
 		}
 	}
